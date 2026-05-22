@@ -1,25 +1,985 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interactive Flowers</title>
-    <style>
-        body {
-            margin: 0;
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            font-family: Arial, sans-serif;
-        }
-        h1 {
-            color: white;
-            text-align: center;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Floral Script Bloom</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .tool-canvas-area {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+    canvas { display: block; background: transparent; }
+  </style>
 </head>
 <body>
-    <h1>🌸 Interactive Flowers 🌸</h1>
-    <p style="color: white; text-align: center;">Welcome to your interactive flowers project!</p>
+  <div class="tool-canvas-area"></div>
+  <script>
+    (function() {
+      var _isMobile = window.innerWidth <= 768;
+      if (_isMobile) {
+        var _nativeDPR = window.devicePixelRatio || 1;
+        var _cappedDPR = Math.min(1.5, _nativeDPR);
+        Object.defineProperty(window, 'devicePixelRatio', { get: function() { return _cappedDPR; } });
+      }
+    })();
+
+    window.CanvasRuntimeAPI = (function() {
+      var _exportMode = 'auto';
+      var _exportWidth = 0;
+      var _exportHeight = 0;
+      var _bgState = { mode: 'none', color: '#ffffff', imageEl: null, imageDataURL: null, fit: 'cover' };
+      var _cameraBridgeEnabled = false;
+      var _cameraRequestSeq = 0;
+      var _cameraSessions = {};
+      var _cameraFrameListeners = [];
+      var _cameraStopNotified = {};
+      var _canvas = document.getElementById('canvas');
+      var _area = _canvas ? _canvas.parentElement : document.querySelector('.tool-canvas-area');
+      var _resizeRAF = null;
+
+      function _detectCanvas() {
+        var r = window.renderer || window.threeRenderer;
+        if (r && r.domElement) {
+          _canvas = r.domElement;
+          _area = _canvas.parentElement;
+          return;
+        }
+        var area = document.querySelector('.tool-canvas-area');
+        if (area) {
+          var canvases = area.querySelectorAll('canvas');
+          var visible = [];
+          for (var j = 0; j < canvases.length; j++) {
+            if (canvases[j].style.display !== 'none') visible.push(canvases[j]);
+          }
+          if (visible.length >= 1) {
+            var largest = visible[0];
+            for (var i = 1; i < visible.length; i++) {
+              if (visible[i].width * visible[i].height > largest.width * largest.height) {
+                largest = visible[i];
+              }
+            }
+            _canvas = largest;
+            _area = _canvas.parentElement;
+          }
+        }
+      }
+
+      function _cameraFallbackConstraints(constraints) {
+        return constraints || { audio: false, video: true };
+      }
+
+      function _makeCameraRequestId() {
+        _cameraRequestSeq += 1;
+        return 'camera-' + Date.now() + '-' + _cameraRequestSeq;
+      }
+
+      function _makeCameraCanvas(width, height) {
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(width || 1));
+        canvas.height = Math.max(1, Math.round(height || 1));
+        canvas.style.display = 'none';
+        canvas.setAttribute('aria-hidden', 'true');
+        document.body.appendChild(canvas);
+        return canvas;
+      }
+
+      function _emitCameraFrame(session, payload) {
+        var detail = {
+          requestId: payload.requestId,
+          width: session.canvas.width,
+          height: session.canvas.height,
+          timestamp: payload.timestamp || Date.now(),
+          canvas: session.canvas,
+          imageData: payload.imageData || null,
+          stream: session.stream
+        };
+        for (var i = 0; i < _cameraFrameListeners.length; i++) {
+          try {
+            _cameraFrameListeners[i](detail);
+          } catch (err) {
+            setTimeout(function() { throw err; }, 0);
+          }
+        }
+        if (typeof CustomEvent !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('clay:camera-frame', { detail: detail }));
+        }
+      }
+
+      function _wrapCameraStream(stream, requestId) {
+        if (!stream) return stream;
+        try {
+          Object.defineProperty(stream, '__clayCameraRequestId', {
+            value: requestId,
+            configurable: true
+          });
+        } catch (err) {}
+        return stream;
+      }
+
+      function _captureNativeCameraFrame(session, timestamp) {
+        if (!session.video || session.video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+          return;
+        }
+        var width = Math.max(1, session.video.videoWidth || session.canvas.width || 1);
+        var height = Math.max(1, session.video.videoHeight || session.canvas.height || 1);
+        if (session.canvas.width !== width) session.canvas.width = width;
+        if (session.canvas.height !== height) session.canvas.height = height;
+        if (!session.ctx) return;
+        session.ctx.drawImage(session.video, 0, 0, width, height);
+        _emitCameraFrame(session, {
+          imageData: session.ctx.getImageData(0, 0, width, height),
+          requestId: session.requestId,
+          timestamp: timestamp,
+          width: width,
+          height: height
+        });
+      }
+
+      function _scheduleNativeCameraFrame(session) {
+        if (!session || session.stopped) return;
+        if (session.video && session.video.requestVideoFrameCallback) {
+          session.videoFrameRequestId = session.video.requestVideoFrameCallback(function(now) {
+            _captureNativeCameraFrame(session, now || performance.now());
+            _scheduleNativeCameraFrame(session);
+          });
+          return;
+        }
+        session.animationFrameId = requestAnimationFrame(function(now) {
+          _captureNativeCameraFrame(session, now);
+          _scheduleNativeCameraFrame(session);
+        });
+      }
+
+      function _watchNativeCameraStream(stream, requestId) {
+        var canvas = _makeCameraCanvas(1, 1);
+        var video = document.createElement('video');
+        video.autoplay = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.srcObject = stream;
+
+        var session = {
+          animationFrameId: null,
+          canvas: canvas,
+          ctx: canvas.getContext('2d', { willReadFrequently: true }),
+          requestId: requestId,
+          stopped: false,
+          stream: stream,
+          video: video,
+          videoFrameRequestId: null
+        };
+        _cameraSessions[requestId] = session;
+        video.play().then(function() {
+          _scheduleNativeCameraFrame(session);
+        }).catch(function() {});
+      }
+
+      function requestCamera(constraints) {
+        if (
+          typeof navigator === 'undefined' ||
+          !navigator.mediaDevices ||
+          typeof navigator.mediaDevices.getUserMedia !== 'function'
+        ) {
+          return Promise.reject(new Error('Camera is not available in this browser.'));
+        }
+        var requestId = _makeCameraRequestId();
+        delete _cameraStopNotified[requestId];
+        return navigator.mediaDevices.getUserMedia(_cameraFallbackConstraints(constraints))
+          .then(function(stream) {
+            _wrapCameraStream(stream, requestId);
+            _watchNativeCameraStream(stream, requestId);
+            return stream;
+          });
+      }
+
+      function stopCamera(stream) {
+        var requestId = typeof stream === 'string'
+          ? stream
+          : stream && stream.__clayCameraRequestId
+          ? stream.__clayCameraRequestId
+          : null;
+        var session = requestId ? _cameraSessions[requestId] : null;
+        if (requestId) delete _cameraSessions[requestId];
+        if (session) {
+          session.stopped = true;
+          if (typeof session.videoFrameRequestId === 'number' && session.video) {
+            session.video.cancelVideoFrameCallback && session.video.cancelVideoFrameCallback(session.videoFrameRequestId);
+          }
+          if (typeof session.animationFrameId === 'number') {
+            cancelAnimationFrame(session.animationFrameId);
+          }
+          if (session.video) {
+            session.video.pause();
+            session.video.srcObject = null;
+          }
+          if (session.canvas && session.canvas.remove) session.canvas.remove();
+          stream = session.stream;
+        }
+        if (stream && stream.getTracks) {
+          var tracks = stream.getTracks();
+          for (var i = 0; i < tracks.length; i++) {
+            if (tracks[i] && typeof tracks[i].stop === 'function') {
+              tracks[i].stop();
+            }
+          }
+        }
+      }
+
+      function onCameraFrame(callback) {
+        if (typeof callback !== 'function') {
+          return function() {};
+        }
+        _cameraFrameListeners.push(callback);
+        return function() {
+          var next = [];
+          for (var i = 0; i < _cameraFrameListeners.length; i++) {
+            if (_cameraFrameListeners[i] !== callback) next.push(_cameraFrameListeners[i]);
+          }
+          _cameraFrameListeners = next;
+        };
+      }
+
+      function _applyBgCSS() {
+        _detectCanvas();
+        if (!_canvas) return;
+        if (_bgState.mode === 'none') {
+          _canvas.style.background = '';
+        } else if (_bgState.mode === 'solid') {
+          _canvas.style.background = _bgState.color;
+        } else if (_bgState.mode === 'image') {
+          if (_bgState.imageDataURL) {
+            var fitCss = _bgState.fit === 'fill' ? '100% 100%' : _bgState.fit;
+            _canvas.style.backgroundColor = _bgState.color;
+            _canvas.style.backgroundImage = 'url("' + _bgState.imageDataURL + '")';
+            _canvas.style.backgroundSize = fitCss;
+            _canvas.style.backgroundPosition = 'center';
+            _canvas.style.backgroundRepeat = 'no-repeat';
+          } else {
+            _canvas.style.backgroundImage = '';
+            _canvas.style.backgroundColor = _bgState.color;
+          }
+        }
+      }
+
+      function setBackground(state) {
+        state = state || {};
+        _bgState.mode = state.mode || 'none';
+        _bgState.color = state.color || '#ffffff';
+        _bgState.fit = state.fit || 'cover';
+        if (state.image && state.image !== _bgState.imageDataURL) {
+          _bgState.imageDataURL = state.image;
+          _bgState.imageEl = null;
+          _applyBgCSS();
+          var img = new Image();
+          img.onload = function() {
+            if (_bgState.imageDataURL !== state.image) return;
+            _bgState.imageEl = img;
+          };
+          img.src = state.image;
+        } else if (!state.image) {
+          _bgState.imageEl = null;
+          _bgState.imageDataURL = null;
+        }
+        _applyBgCSS();
+      }
+
+      function getBackground() {
+        return { mode: _bgState.mode, color: _bgState.color, fit: _bgState.fit };
+      }
+
+      function setCanvas(el) {
+        _canvas = el;
+        _area = el ? el.parentElement : document.querySelector('.tool-canvas-area');
+        if (_bgState.mode !== 'none') _applyBgCSS();
+      }
+
+      function setExportDimensions(w, h) {
+        _detectCanvas();
+        _exportMode = 'fixed';
+        _exportWidth = Math.max(1, Math.round(w || 1));
+        _exportHeight = Math.max(1, Math.round(h || 1));
+        if (_canvas) {
+          _canvas.width = _exportWidth;
+          _canvas.height = _exportHeight;
+        }
+        if (window.p5 && typeof window.resizeCanvas === 'function') window.resizeCanvas(_exportWidth, _exportHeight);
+        if (window.renderer && window.renderer.setSize) window.renderer.setSize(_exportWidth, _exportHeight, false);
+        if (window.hydra && window.hydra.setResolution) window.hydra.setResolution(_exportWidth, _exportHeight);
+        window.dispatchEvent(new Event('resize'));
+      }
+
+      function fitToArea() {}
+
+      function getExportDimensions() {
+        if (_exportMode === 'fixed') return { width: _exportWidth, height: _exportHeight, mode: 'fixed' };
+        _detectCanvas();
+        return { width: _canvas ? _canvas.width : 0, height: _canvas ? _canvas.height : 0, mode: 'auto' };
+      }
+
+      function isFixedExportMode() { return _exportMode === 'fixed'; }
+
+      function _onAreaResize() {
+        var r = window.renderer || window.threeRenderer;
+        if (!r || !r.setSize) return;
+        if (_resizeRAF) cancelAnimationFrame(_resizeRAF);
+        _resizeRAF = requestAnimationFrame(function() {
+          _detectCanvas();
+          if (!_area) return;
+          var w = _area.clientWidth;
+          var h = _area.clientHeight;
+          if (w <= 0 || h <= 0) return;
+          r.setSize(w, h);
+          window.dispatchEvent(new Event('resize'));
+        });
+      }
+      if (typeof ResizeObserver !== 'undefined' && _area) {
+        new ResizeObserver(_onAreaResize).observe(_area);
+      }
+      window.addEventListener('resize', _onAreaResize);
+
+      setTimeout(function() {
+        _detectCanvas();
+        if (_bgState.mode !== 'none') _applyBgCSS();
+      }, 500);
+
+      function getMousePos(event) {
+        _detectCanvas();
+        if (!_canvas) return { x: 0, y: 0 };
+        var rect = _canvas.getBoundingClientRect();
+        var scaleX = _canvas.width / rect.width;
+        var scaleY = _canvas.height / rect.height;
+        var touch = event.touches && event.touches[0]
+          ? event.touches[0]
+          : event.changedTouches && event.changedTouches[0]
+          ? event.changedTouches[0]
+          : null;
+        var clientX = touch ? touch.clientX : event.clientX;
+        var clientY = touch ? touch.clientY : event.clientY;
+        return {
+          x: (clientX - rect.left) * scaleX,
+          y: (clientY - rect.top) * scaleY
+        };
+      }
+
+      function drawImage(ctx, img, x, y, w, h, fit) {
+        if (!img || !img.width || !img.height) return;
+        fit = fit || 'cover';
+        var ar = img.width / img.height;
+        var car = w / h;
+        var sx = 0, sy = 0, sw = img.width, sh = img.height;
+        var dx = x, dy = y, dw = w, dh = h;
+
+        if (fit === 'cover') {
+          if (ar > car) { sw = img.height * car; sx = (img.width - sw) / 2; }
+          else { sh = img.width / car; sy = (img.height - sh) / 2; }
+        } else if (fit === 'contain') {
+          if (ar > car) { dh = w / ar; dy = y + (h - dh) / 2; }
+          else { dw = h * ar; dx = x + (w - dw) / 2; }
+        }
+
+        ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+      }
+
+      return {
+        setCanvas: setCanvas,
+        setBackground: setBackground,
+        getBackground: getBackground,
+        setExportDimensions: setExportDimensions,
+        fitToArea: fitToArea,
+        getExportDimensions: getExportDimensions,
+        isFixedExportMode: isFixedExportMode,
+        requestCamera: requestCamera,
+        stopCamera: stopCamera,
+        onCameraFrame: onCameraFrame,
+        getMousePos: getMousePos,
+        drawImage: drawImage
+      };
+    })();
+
+    window.ChatoolyCanvas = window.CanvasRuntimeAPI;
+    window.ChatoolyControls = window.ControlsAPI;
+
+    (function() {
+      var srcDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+      if (srcDesc && srcDesc.set) {
+        Object.defineProperty(HTMLImageElement.prototype, 'src', {
+          get: srcDesc.get,
+          set: function(val) {
+            if (val && typeof val === 'string' && !val.startsWith('data:') && !this.crossOrigin) {
+              this.crossOrigin = 'anonymous';
+            }
+            srcDesc.set.call(this, val);
+          },
+          configurable: true,
+          enumerable: true
+        });
+      }
+    })();
+
+    window.loadImage = function(src, callback) {
+      var img = new Image();
+      if (src && typeof src === 'string' && !src.startsWith('data:')) {
+        img.crossOrigin = 'anonymous';
+      }
+      img.onload = function() { if (callback) callback(img); };
+      img.onerror = function() { console.error('Failed to load image:', src); };
+      img.src = src;
+      return img;
+    };
+  </script>
+  <script>
+    var controls = (function() {
+      var _v = {"text":"(liebestod*¨][*¨+´+´+)","camera_interaction":false,"wind_strength":350,"hand_sensitivity":1,"volume":50,"text_color":"#ffffff","font_size":32,"blur":5,"color_mode":"Fixed","image":"https://base44.app/api/apps/69cbcd44d3da2a5cef013f5e/files/mp/public/69cbcd44d3da2a5cef013f5e/10f92b162_image_mpg6lqf6.jpg","play":true,"speed":2,"density":300,"noise_strength":30,"flower_size":0.8};
+      var _defaults = JSON.parse(JSON.stringify(_v));
+      function _hexToRgb(hex) {
+        var h = String(hex || '').replace('#', '');
+        if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+        if (h.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(h)) return null;
+        return {
+          r: parseInt(h.slice(0, 2), 16),
+          g: parseInt(h.slice(2, 4), 16),
+          b: parseInt(h.slice(4, 6), 16)
+        };
+      }
+      function _clamp(n, min, max) { return Math.min(max, Math.max(min, n)); }
+      function _hexToRgbaCss(hex, opacity0to100) {
+        var rgb = _hexToRgb(hex);
+        if (!rgb) return 'rgba(0,0,0,1)';
+        var op = opacity0to100 != null && !isNaN(Number(opacity0to100)) ? Number(opacity0to100) : 100;
+        var a = _clamp(op, 0, 100) / 100;
+        return 'rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ',' + a + ')';
+      }
+      var api = {
+        get: function(k) { return _v[k]; },
+        getAll: function() { return Object.assign({}, _v); },
+        getDefaults: function() { return JSON.parse(JSON.stringify(_defaults)); },
+        getColorWithAlpha: function(baseKey) { return _hexToRgbaCss(_v[baseKey], _v[baseKey + '_opacity']); },
+        set: function(k, v) { _v[k] = v; },
+        onChange: function() {},
+        onAny: function() {},
+        onAction: function() {}
+      };
+      window.ControlsAPI = api;
+      window.ChatoolyControls = api;
+      return api;
+    })();
+
+    (function() {
+      var area = document.querySelector('.tool-canvas-area');
+      var obs = new MutationObserver(function(muts) {
+        for (var i = 0; i < muts.length; i++) {
+          for (var j = 0; j < muts[i].addedNodes.length; j++) {
+            var node = muts[i].addedNodes[j];
+            if (node.tagName === 'CANVAS') {
+              if (typeof CanvasRuntimeAPI !== 'undefined') CanvasRuntimeAPI.setCanvas(node);
+              obs.disconnect();
+              return;
+            }
+          }
+        }
+      });
+      obs.observe(area, { childList: true });
+    })();
+
+    let bgImg;
+    let lastImgUrl = '';
+    let plants = [];
+    let growthTimer = 0;
+    let cycleStartTime = 0;
+    const CYCLE_DURATION = 180000;
+
+    let cameraStream = null;
+    let prevFrame = null;
+    let motionGrid = [];
+    const gridCols = 60;
+    const gridRows = 45;
+
+    const AudioEngine = {
+      ctx: null,
+      master: null,
+      initialized: false,
+
+      init() {
+        if (this.initialized) return;
+        try {
+          this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+          this.master = this.ctx.createGain();
+          this.master.connect(this.ctx.destination);
+          this.initialized = true;
+        } catch (e) {
+          console.warn("AudioContext not supported");
+        }
+      },
+
+      resume() {
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      },
+
+      playDrop() {
+        if (!this.initialized) return;
+        const vol = (controls.get('volume') || 50) / 100;
+        if (vol <= 0) return;
+
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(random(800, 1200), this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(vol * 0.05, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
+        osc.connect(gain);
+        gain.connect(this.master);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.1);
+      },
+
+      playBell() {
+        if (!this.initialized) return;
+        const vol = (controls.get('volume') || 50) / 100;
+        if (vol <= 0) return;
+
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(random(1500, 2500), this.ctx.currentTime);
+        gain.gain.setValueAtTime(vol * 0.03, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 1.5);
+        osc.connect(gain);
+        gain.connect(this.master);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 1.5);
+      },
+
+      playShimmer() {
+        if (!this.initialized || random() > 0.1) return;
+        const vol = (controls.get('volume') || 50) / 100;
+        if (vol <= 0) return;
+
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(random(3000, 5000), this.ctx.currentTime);
+        gain.gain.setValueAtTime(vol * 0.01, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.05);
+        osc.connect(gain);
+        gain.connect(this.master);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.05);
+      }
+    };
+
+    function setup() {
+      const area = document.querySelector('.tool-canvas-area');
+      const staticCanvas = document.getElementById('canvas');
+      if (staticCanvas) staticCanvas.style.display = 'none';
+
+      let w = area ? area.clientWidth : windowWidth;
+      let h = area ? area.clientHeight : windowHeight;
+      if (w === 0) w = 800;
+      if (h === 0) h = 600;
+
+      let c = createCanvas(w, h);
+      if (area) c.parent(area);
+      c.id('canvas');
+
+      textFont('Helvetica');
+      textAlign(CENTER, CENTER);
+      
+      cycleStartTime = millis();
+      initSystem();
+      initMotionGrid();
+
+      controls.onChange('camera_interaction', (val) => {
+        if (val) startCamera();
+        else stopCamera();
+      });
+      
+      if (controls.get('camera_interaction')) startCamera();
+    }
+
+    function initMotionGrid() {
+      motionGrid = [];
+      for (let i = 0; i < gridCols * gridRows; i++) {
+        motionGrid[i] = 0;
+      }
+    }
+
+    async function startCamera() {
+      try {
+        cameraStream = await CanvasRuntimeAPI.requestCamera({ video: true });
+        CanvasRuntimeAPI.onCameraFrame((frame) => {
+          processMotion(frame.imageData);
+        });
+      } catch (e) {
+        console.error("Camera access denied", e);
+        controls.set('camera_interaction', false);
+      }
+    }
+
+    function stopCamera() {
+      if (cameraStream) {
+        CanvasRuntimeAPI.stopCamera(cameraStream);
+        cameraStream = null;
+        initMotionGrid();
+      }
+    }
+
+    function processMotion(imgData) {
+      if (!prevFrame || prevFrame.length !== imgData.data.length) {
+        prevFrame = new Uint8ClampedArray(imgData.data);
+        return;
+      }
+
+      const threshold = 35;
+      const cellW = imgData.width / gridCols;
+      const cellH = imgData.height / gridRows;
+
+      for (let i = 0; i < motionGrid.length; i++) {
+        motionGrid[i] *= 0.82;
+      }
+
+      for (let y = 0; y < imgData.height; y += 4) {
+        for (let x = 0; x < imgData.width; x += 4) {
+          let i = (y * imgData.width + x) * 4;
+          let diff = Math.abs(imgData.data[i] - prevFrame[i]) + 
+                     Math.abs(imgData.data[i+1] - prevFrame[i+1]) + 
+                     Math.abs(imgData.data[i+2] - prevFrame[i+2]);
+          
+          if (diff > threshold) {
+            let gx = Math.floor(x / cellW);
+            let gy = Math.floor(y / cellH);
+            let mirroredGX = (gridCols - 1) - gx;
+            let gridIdx = gy * gridCols + mirroredGX;
+            if (gridIdx >= 0 && gridIdx < motionGrid.length) {
+              motionGrid[gridIdx] += diff * 0.01;
+            }
+          }
+          
+          prevFrame[i] = imgData.data[i];
+          prevFrame[i+1] = imgData.data[i+1];
+          prevFrame[i+2] = imgData.data[i+2];
+        }
+      }
+    }
+
+    function initSystem() {
+      plants = [];
+      growthTimer = 0;
+      plants.push(new Plant(width / 2, height));
+    }
+
+    function draw() {
+      if (frameCount % 60 === 0) AudioEngine.resume();
+      
+      background(15);
+      handleImage();
+      
+      let elapsed = millis() - cycleStartTime;
+      let fadeOutStart = CYCLE_DURATION - 2000;
+      
+      if (elapsed > CYCLE_DURATION) {
+        initSystem();
+        cycleStartTime = millis();
+      }
+
+      if (bgImg && bgImg.width > 1) {
+        push();
+        if (controls.get('blur') > 0) {
+          drawingContext.filter = `blur(${controls.get('blur')}px)`;
+        }
+        let imgAspect = bgImg.width / bgImg.height;
+        let canvasAspect = width / height;
+        let dw, dh, dx, dy;
+        if (canvasAspect > imgAspect) {
+          dw = width; dh = width / imgAspect; dx = 0; dy = (height - dh) / 2;
+        } else {
+          dh = height; dw = height * imgAspect; dx = (width - dw) / 2; dy = 0;
+        }
+        image(bgImg, dx, dy, dw, dh);
+        pop();
+      }
+
+      if (elapsed > fadeOutStart) {
+        let alpha = map(elapsed, fadeOutStart, CYCLE_DURATION, 0, 255);
+        fill(15, alpha);
+        noStroke();
+        rect(0, 0, width, height);
+      }
+
+      if (controls.get('play')) {
+        let speed = controls.get('speed') || 2;
+        growthTimer += speed * 0.15;
+        
+        if (growthTimer > 1) {
+          plants.forEach(p => {
+            if (p.nodes.length < (controls.get('density') || 300)) {
+              p.grow();
+            }
+          });
+          growthTimer = 0;
+        }
+      }
+
+      plants.forEach(p => p.update());
+      plants.forEach(p => p.display());
+
+      if (controls.get('camera_interaction')) {
+        const cellW = width / gridCols;
+        const cellH = height / gridRows;
+        noStroke();
+        for (let gy = 0; gy < gridRows; gy++) {
+          for (let gx = 0; gx < gridCols; gx++) {
+            let val = motionGrid[gy * gridCols + gx];
+            if (val > 0.5) {
+              fill(255, map(val, 0.5, 10, 0, 40));
+              rect(gx * cellW + cellW/2, gy * cellH + cellH/2, 1.5, 1.5);
+            }
+          }
+        }
+      }
+    }
+
+    function mousePressed() {
+      AudioEngine.init();
+      AudioEngine.resume();
+      if (mouseY > height * 0.8) {
+        plants.push(new Plant(mouseX, height));
+      }
+    }
+
+    class Plant {
+      constructor(x, y) {
+        this.nodes = [];
+        let root = new Node(x, y, null, '', 0);
+        root.angle = -PI / 2;
+        this.nodes.push(root);
+      }
+
+      grow() {
+        let content = controls.get('text') || '(liebestod*¨][*¨+´+´+)';
+        let chaos = (controls.get('noise_strength') || 30) / 100;
+        
+        let parent;
+        if (this.nodes.length < 12) {
+          parent = this.nodes[this.nodes.length - 1];
+        } else {
+          let idx = floor(random(max(0, this.nodes.length - 30), this.nodes.length));
+          parent = this.nodes[idx];
+        }
+        
+        if (parent.depth > 60) return;
+
+        let noiseVal = noise(parent.pos.x * 0.01, parent.pos.y * 0.01, this.nodes.length * 0.05);
+        let angle = parent.angle + (noiseVal - 0.5) * chaos * PI;
+        
+        if (parent.depth < 10) {
+          angle = lerp(angle, -PI / 2, 0.85);
+        }
+
+        let len = random(15, 35);
+        let x = parent.pos.x + cos(angle) * len;
+        let y = parent.pos.y + sin(angle) * len;
+        
+        if (x < -100 || x > width + 100 || y < -100 || y > height + 100) return;
+
+        let char = content[this.nodes.length % content.length];
+        let newNode = new Node(x, y, parent, char, parent.depth + 1);
+        newNode.angle = angle;
+        
+        parent.isTerminal = false;
+        this.nodes.push(newNode);
+        
+        AudioEngine.playDrop();
+      }
+
+      update() {
+        this.nodes.forEach(n => n.update());
+      }
+
+      display() {
+        this.nodes.forEach(n => n.drawBranch());
+        this.nodes.forEach(n => n.drawLetter());
+      }
+    }
+
+    class Node {
+      constructor(x, y, parent, char, depth) {
+        this.pos = createVector(x, y);
+        this.basePos = this.pos.copy();
+        this.parent = parent;
+        this.char = char;
+        this.depth = depth;
+        this.angle = -PI / 2;
+        this.size = 0;
+        this.isTerminal = true;
+        this.bloomScale = 0;
+        this.hasBloomed = false;
+        
+        let baseSize = controls.get('font_size') || 32;
+        this.targetSize = map(depth, 1, 60, baseSize, baseSize * 0.3);
+        this.offset = createVector(0, 0);
+        
+        if (typeof gsap !== 'undefined') {
+          gsap.to(this, {
+            size: this.targetSize,
+            duration: 1.5,
+            ease: "elastic.out(1, 0.5)"
+          });
+        } else {
+          this.size = this.targetSize;
+        }
+      }
+
+      update() {
+        let windStr = (controls.get('wind_strength') || 120) / 100;
+        let windEffect = createVector(0, 0);
+
+        let mousePos = createVector(mouseX, mouseY);
+        let distToMouse = p5.Vector.dist(this.pos, mousePos);
+        if (distToMouse < 400) {
+          let mEffect = p5.Vector.sub(this.pos, mousePos);
+          mEffect.normalize();
+          let force = map(distToMouse, 0, 400, windStr * 250, 0);
+          windEffect.add(mEffect.mult(force));
+        }
+
+        if (controls.get('camera_interaction')) {
+          let gx = Math.floor(constrain(map(this.pos.x, 0, width, 0, gridCols - 1), 0, gridCols - 1));
+          let gy = Math.floor(constrain(map(this.pos.y, 0, height, 0, gridRows - 1), 0, gridRows - 1));
+          let motion = motionGrid[gy * gridCols + gx];
+          let sensitivity = controls.get('hand_sensitivity') || 1;
+          
+          if (motion > 0.1) {
+            let push = createVector(this.pos.x - width/2, this.pos.y - height/2);
+            push.normalize();
+            windEffect.add(push.mult(motion * windStr * 50 * sensitivity));
+            AudioEngine.playShimmer();
+          }
+        }
+        
+        let time = frameCount * 0.06; 
+        let noiseScale = 0.008;
+        let depthFactor = pow(this.depth / 10, 1.5); 
+        let turbulence = windStr * 60 * depthFactor;
+        
+        let swayX = (noise(this.basePos.x * noiseScale, this.basePos.y * noiseScale, time) - 0.5) * turbulence;
+        let swayY = (noise(this.basePos.x * noiseScale + 1000, this.basePos.y * noiseScale, time + 100) - 0.5) * (turbulence * 0.6);
+        
+        let whip = sin(frameCount * 0.2 + this.depth) * (windStr * 5 * depthFactor);
+        swayX += whip;
+        swayY += whip * 0.5;
+        
+        let targetOffset = createVector(swayX + windEffect.x, swayY + windEffect.y);
+        this.offset.lerp(targetOffset, 0.12); 
+        this.pos = p5.Vector.add(this.basePos, this.offset);
+
+        if (this.isTerminal && this.depth > 15) {
+          if (!this.hasBloomed && this.bloomScale > 0.5) {
+            AudioEngine.playBell();
+            this.hasBloomed = true;
+            this.lastRung = millis();
+          }
+          this.bloomScale = lerp(this.bloomScale, 1, 0.05);
+        }
+      }
+
+      drawBranch() {
+        if (!this.parent || this.depth === 0) return;
+        stroke(255, 60);
+        if (controls.get('color_mode') === 'Natural' && bgImg && bgImg.width > 1) {
+          let imgX = floor(constrain(map(this.basePos.x, 0, width, 0, bgImg.width), 0, bgImg.width - 1));
+          let imgY = floor(constrain(map(this.basePos.y, 0, height, 0, bgImg.height), 0, bgImg.height - 1));
+          let c = bgImg.get(imgX, imgY);
+          if (c && alpha(c) > 0) stroke(red(c), green(c), blue(c), 100);
+        }
+        strokeWeight(map(this.depth, 1, 60, 5, 0.5));
+        line(this.pos.x, this.pos.y, this.parent.pos.x, this.parent.pos.y);
+      }
+
+      drawLetter() {
+        if (this.size < 0.1 || !this.char) return;
+        
+        push();
+        translate(this.pos.x, this.pos.y);
+        rotate(this.angle + PI/2);
+        
+        let col = color(controls.get('text_color') || '#ffffff');
+        if (controls.get('color_mode') === 'Natural' && bgImg && bgImg.width > 1) {
+          let imgX = floor(constrain(map(this.basePos.x, 0, width, 0, bgImg.width), 0, bgImg.width - 1));
+          let imgY = floor(constrain(map(this.basePos.y, 0, height, 0, bgImg.height), 0, bgImg.height - 1));
+          let sampled = bgImg.get(imgX, imgY);
+          if (sampled && alpha(sampled) > 0) col = sampled;
+        }
+
+        noStroke();
+        fill(col);
+        textSize(this.size);
+        text(this.char, 0, 0);
+
+        if (this.isTerminal && this.bloomScale > 0.01) {
+          this.drawFlower(col);
+        }
+        pop();
+      }
+
+      drawFlower(col) {
+        let petals = 6;
+        let fSize = controls.get('flower_size') || 0.8;
+        let radius = (controls.get('font_size') || 32) * fSize * this.bloomScale;
+        let content = controls.get('text') || '(liebestod*¨][*¨+´+´+)';
+        
+        push();
+        for (let i = 0; i < petals; i++) {
+          rotate(TWO_PI / petals);
+          fill(red(col), green(col), blue(col), 200 * this.bloomScale);
+          textSize(this.size * fSize * this.bloomScale);
+          text(content[i % content.length], radius, 0);
+          fill(255, 200 * this.bloomScale);
+          rectMode(CENTER);
+          rect(0, 0, 1.5 * this.bloomScale, 1.5 * this.bloomScale);
+          rectMode(CORNER);
+        }
+        pop();
+      }
+    }
+
+    function handleImage() {
+      let url = controls.get('image');
+      if (url && url !== lastImgUrl) {
+        lastImgUrl = url;
+        bgImg = loadImage(url);
+      }
+    }
+
+    function windowResized() {
+      const area = document.querySelector('.tool-canvas-area');
+      if (area) {
+        resizeCanvas(area.clientWidth, area.clientHeight);
+        initSystem();
+      }
+    }
+
+    controls.onAction('reset', initSystem);
+    controls.onChange('text', initSystem);
+    controls.onChange('density', initSystem);
+  </script>
 </body>
 </html>
