@@ -45,7 +45,6 @@
       max-height: 100vh;
     }
     
-    /* Mobile optimizations */
     @media (max-width: 768px) {
       body {
         font-size: 12px;
@@ -472,7 +471,7 @@
   </script>
   <script>
     var controls = (function() {
-      var _v = {"about_text":"\"Liebestod Blooming Flower\" is an interactive experience where you can modify and interact with the growth of a digital flower. The flower has a three-minute life cycle, after which it is reborn. Hand tracking enables real-time interaction: the closer your hands get, the more the flower deforms and the sound changes. Please make sure your camera is enabled.","text":"(liebestod*¨][*¨+´+´+)","text_color":"#ffffff","font_size":24,"play":true,"speed":2,"wind_strength":300,"density":250,"noise_strength":30,"flower_size":0.7,"volume":8,"camera_interaction":false,"hand_sensitivity":1,"blur":3,"image":"https://base44.app/api/apps/69cbcd44d3da2a5cef013f5e/files/mp/public/69cbcd44d3da2a5cef013f5e/10f92b162_image_mpg6lqf6.jpg"};
+      var _v = {"description_text":"\"Liebestod Blooming Flower\" is an interactive experience where you can modify and interact with the growth of a digital flower. The flower has a one-minute life cycle, after which it is reborn. Hand tracking enables real-time interaction: the closer your hands get, the more the flower deforms and the sound changes. Please make sure your camera is enabled.","text":"(liebestod*¨][*¨+´+´+)","text_color":"#ffffff","font_size":32,"play":true,"speed":2,"color_mode":"Fixed","volume":8,"wind_strength":350,"density":300,"noise_strength":30,"flower_size":0.8,"hand_sensitivity":1,"blur":5,"camera_interaction":false,"image":"https://base44.app/api/apps/69cbcd44d3da2a5cef013f5e/files/mp/public/69cbcd44d3da2a5cef013f5e/10f92b162_image_mpg6lqf6.jpg"};
       var _defaults = JSON.parse(JSON.stringify(_v));
       function _hexToRgb(hex) {
         var h = String(hex || '').replace('#', '');
@@ -529,13 +528,13 @@
     let plants = [];
     let growthTimer = 0;
     let cycleStartTime = 0;
-    const CYCLE_DURATION = 180000;
+    const CYCLE_DURATION = 60000;
 
     let cameraStream = null;
     let prevFrame = null;
     let motionGrid = [];
-    const gridCols = 40;
-    const gridRows = 30;
+    const gridCols = 60;
+    const gridRows = 45;
 
     const AudioEngine = {
       ctx: null,
@@ -560,30 +559,66 @@
         }
       },
 
-      playBell() {
+      playDrop() {
         if (!this.initialized) return;
-        this.resume();
-        
-        const vol = (controls.get('volume') || 8) / 100;
+        const vol = (controls.get('volume') || 50) / 100;
         if (vol <= 0) return;
 
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
         osc.type = 'sine';
+        osc.frequency.setValueAtTime(random(800, 1200), this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.1);
         
-        const freqs = [1567.98, 1760.00, 1975.53, 2349.32, 2637.02];
-        osc.frequency.setValueAtTime(freqs[Math.floor(Math.random() * freqs.length)], this.ctx.currentTime);
-        
-        gain.gain.setValueAtTime(0, this.ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(vol * 0.1, this.ctx.currentTime + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 2.0);
+        gain.gain.setValueAtTime(vol * 0.05, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
         
         osc.connect(gain);
         gain.connect(this.master);
         osc.start();
-        osc.stop(this.ctx.currentTime + 2.0);
+        osc.stop(this.ctx.currentTime + 0.1);
+      },
+
+      playBell() {
+        if (!this.initialized) return;
+        const vol = (controls.get('volume') || 50) / 100;
+        if (vol <= 0) return;
+
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(random(1500, 2500), this.ctx.currentTime);
+        
+        gain.gain.setValueAtTime(vol * 0.03, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 1.5);
+        
+        osc.connect(gain);
+        gain.connect(this.master);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 1.5);
+      },
+
+      playShimmer() {
+        if (!this.initialized || random() > 0.1) return;
+        const vol = (controls.get('volume') || 50) / 100;
+        if (vol <= 0) return;
+
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(random(3000, 5000), this.ctx.currentTime);
+        
+        gain.gain.setValueAtTime(vol * 0.01, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.05);
+        
+        osc.connect(gain);
+        gain.connect(this.master);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.05);
       }
     };
+
+    let mX = 0, mY = 0;
 
     function setup() {
       const area = document.querySelector('.tool-canvas-area');
@@ -592,12 +627,22 @@
 
       let w = area ? area.clientWidth : windowWidth;
       let h = area ? area.clientHeight : windowHeight;
-      if (w === 0) w = 800;
-      if (h === 0) h = 600;
-
+      
       let c = createCanvas(w, h);
       if (area) c.parent(area);
       c.id('canvas');
+
+      const canvasElement = document.getElementById('canvas');
+      const updateCoords = (e) => {
+        const pos = CanvasRuntimeAPI.getMousePos(e);
+        mX = pos.x;
+        mY = pos.y;
+      };
+      canvasElement.addEventListener('mousemove', updateCoords);
+      canvasElement.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        updateCoords(e);
+      }, { passive: false });
 
       textFont('Helvetica');
       textAlign(CENTER, CENTER);
@@ -652,11 +697,11 @@
       const cellH = imgData.height / gridRows;
 
       for (let i = 0; i < motionGrid.length; i++) {
-        motionGrid[i] *= 0.85;
+        motionGrid[i] *= 0.82;
       }
 
-      for (let y = 0; y < imgData.height; y += 6) {
-        for (let x = 0; x < imgData.width; x += 6) {
+      for (let y = 0; y < imgData.height; y += 4) {
+        for (let x = 0; x < imgData.width; x += 4) {
           let i = (y * imgData.width + x) * 4;
           let diff = Math.abs(imgData.data[i] - prevFrame[i]) + 
                      Math.abs(imgData.data[i+1] - prevFrame[i+1]) + 
@@ -668,7 +713,7 @@
             let mirroredGX = (gridCols - 1) - gx;
             let gridIdx = gy * gridCols + mirroredGX;
             if (gridIdx >= 0 && gridIdx < motionGrid.length) {
-              motionGrid[gridIdx] += diff * 0.015;
+              motionGrid[gridIdx] += diff * 0.01;
             }
           }
           
@@ -692,8 +737,13 @@
       handleImage();
       
       let elapsed = millis() - cycleStartTime;
-      let fadeOutStart = CYCLE_DURATION - 2000;
+      let witherStart = CYCLE_DURATION - 4000;
+      let witherFactor = 0;
       
+      if (elapsed > witherStart) {
+        witherFactor = map(elapsed, witherStart, CYCLE_DURATION, 0, 1, true);
+      }
+
       if (elapsed > CYCLE_DURATION) {
         initSystem();
         cycleStartTime = millis();
@@ -716,44 +766,23 @@
         pop();
       }
 
-      if (elapsed > fadeOutStart) {
-        let alpha = map(elapsed, fadeOutStart, CYCLE_DURATION, 0, 255);
-        fill(15, alpha);
-        noStroke();
-        rect(0, 0, width, height);
-      }
-
       if (controls.get('play')) {
         let speed = controls.get('speed') || 2;
-        growthTimer += speed * 0.15;
-        
-        if (growthTimer > 1) {
-          plants.forEach(p => {
-            if (p.nodes.length < (controls.get('density') || 250)) {
-              p.grow();
-            }
-          });
-          growthTimer = 0;
+        if (witherFactor === 0) {
+          growthTimer += speed * 0.15;
+          if (growthTimer > 1) {
+            plants.forEach(p => {
+              if (p.nodes.length < (controls.get('density') || 300)) {
+                p.grow();
+              }
+            });
+            growthTimer = 0;
+          }
         }
       }
 
-      plants.forEach(p => p.update());
-      plants.forEach(p => p.display());
-
-      let mousePos = createVector(mouseX, mouseY);
-      plants.forEach(p => {
-        p.nodes.forEach(n => {
-          if (n.isTerminal && n.bloomScale > 0.5) {
-            let d = p5.Vector.dist(n.pos, mousePos);
-            if (d < 40 && !n.cursorOver) {
-              AudioEngine.playBell();
-              n.cursorOver = true;
-            } else if (d >= 40) {
-              n.cursorOver = false;
-            }
-          }
-        });
-      });
+      plants.forEach(p => p.update(witherFactor));
+      plants.forEach(p => p.display(witherFactor));
 
       if (controls.get('camera_interaction')) {
         const cellW = width / gridCols;
@@ -763,27 +792,20 @@
           for (let gx = 0; gx < gridCols; gx++) {
             let val = motionGrid[gy * gridCols + gx];
             if (val > 0.5) {
-              fill(255, map(val, 0.5, 10, 0, 60));
+              fill(255, map(val, 0.5, 10, 0, 40));
               rect(gx * cellW + cellW/2, gy * cellH + cellH/2, 1.5, 1.5);
             }
           }
         }
-      }
-
-      if (!AudioEngine.initialized) {
-        fill(255, 150);
-        textSize(12);
-        text("Tap to Start Audio", width/2, height - 30);
       }
     }
 
     function mousePressed() {
       AudioEngine.init();
       AudioEngine.resume();
-      if (mouseY > height * 0.8) {
-        plants.push(new Plant(mouseX, height));
+      if (mY > height * 0.8) {
+        plants.push(new Plant(mX, height));
       }
-      return false;
     }
 
     function touchStarted() {
@@ -836,15 +858,17 @@
         
         parent.isTerminal = false;
         this.nodes.push(newNode);
+        
+        AudioEngine.playDrop();
       }
 
-      update() {
-        this.nodes.forEach(n => n.update());
+      update(witherFactor) {
+        this.nodes.forEach(n => n.update(witherFactor));
       }
 
-      display() {
-        this.nodes.forEach(n => n.drawBranch());
-        this.nodes.forEach(n => n.drawLetter());
+      display(witherFactor) {
+        this.nodes.forEach(n => n.drawBranch(witherFactor));
+        this.nodes.forEach(n => n.drawLetter(witherFactor));
       }
     }
 
@@ -852,6 +876,7 @@
       constructor(x, y, parent, char, depth) {
         this.pos = createVector(x, y);
         this.basePos = this.pos.copy();
+        this.renderPos = this.pos.copy();
         this.parent = parent;
         this.char = char;
         this.depth = depth;
@@ -862,7 +887,7 @@
         this.hasBloomed = false;
         this.cursorOver = false;
         
-        let baseSize = controls.get('font_size') || 24;
+        let baseSize = controls.get('font_size') || 32;
         this.targetSize = map(depth, 1, 60, baseSize, baseSize * 0.3);
         this.offset = createVector(0, 0);
         
@@ -870,16 +895,25 @@
           gsap.to(this, {
             size: this.targetSize,
             duration: 1.5,
-            ease: 'elastic.out(1, 0.5)'
+            ease: "elastic.out(1, 0.5)"
           });
         } else {
           this.size = this.targetSize;
         }
       }
 
-      update() {
-        let windStr = (controls.get('wind_strength') || 300) / 100;
+      update(witherFactor) {
+        let windStr = (controls.get('wind_strength') || 120) / 100;
         let windEffect = createVector(0, 0);
+
+        let mousePos = createVector(mX, mY);
+        let distToMouse = p5.Vector.dist(this.pos, mousePos);
+        if (distToMouse < 400) {
+          let mEffect = p5.Vector.sub(this.pos, mousePos);
+          mEffect.normalize();
+          let force = map(distToMouse, 0, 400, windStr * 250, 0);
+          windEffect.add(mEffect.mult(force));
+        }
 
         if (controls.get('camera_interaction')) {
           let gx = Math.floor(constrain(map(this.pos.x, 0, width, 0, gridCols - 1), 0, gridCols - 1));
@@ -890,11 +924,8 @@
           if (motion > 0.1) {
             let push = createVector(this.pos.x - width/2, this.pos.y - height/2);
             push.normalize();
-            windEffect.add(push.mult(motion * windStr * 40 * sensitivity));
-            
-            if (this.isTerminal && this.bloomScale > 0.5 && random() < 0.03) {
-              AudioEngine.playBell();
-            }
+            windEffect.add(push.mult(motion * windStr * 50 * sensitivity));
+            AudioEngine.playShimmer();
           }
         }
         
@@ -914,56 +945,84 @@
         this.offset.lerp(targetOffset, 0.12);
         this.pos = p5.Vector.add(this.basePos, this.offset);
 
+        if (witherFactor > 0) {
+          if (this.parent) {
+            this.renderPos = p5.Vector.lerp(this.pos, this.parent.pos, witherFactor);
+          } else {
+            this.renderPos = this.pos.copy();
+          }
+          this.currentSize = this.size * (1 - witherFactor);
+          this.currentBloom = this.bloomScale * (1 - witherFactor);
+        } else {
+          this.renderPos = this.pos.copy();
+          this.currentSize = this.size;
+          this.currentBloom = this.bloomScale;
+        }
+
         if (this.isTerminal && this.depth > 15) {
           if (!this.hasBloomed && this.bloomScale > 0.5) {
             AudioEngine.playBell();
             this.hasBloomed = true;
+            this.lastRung = millis();
           }
           this.bloomScale = lerp(this.bloomScale, 1, 0.05);
         }
       }
 
-      drawBranch() {
-        if (!this.parent || this.depth === 0) return;
-        stroke(255, 60);
-        strokeWeight(map(this.depth, 1, 60, 5, 0.5));
-        line(this.pos.x, this.pos.y, this.parent.pos.x, this.parent.pos.y);
+      drawBranch(witherFactor) {
+        if (!this.parent || this.depth === 0 || witherFactor >= 1) return;
+        stroke(255, 60 * (1 - witherFactor));
+        if (controls.get('color_mode') === 'Natural' && bgImg && bgImg.width > 1) {
+          let imgX = floor(constrain(map(this.basePos.x, 0, width, 0, bgImg.width), 0, bgImg.width - 1));
+          let imgY = floor(constrain(map(this.basePos.y, 0, height, 0, bgImg.height), 0, bgImg.height - 1));
+          let c = bgImg.get(imgX, imgY);
+          if (c && alpha(c) > 0) stroke(red(c), green(c), blue(c), 100 * (1 - witherFactor));
+        }
+        strokeWeight(map(this.depth, 1, 60, 5, 0.5) * (1 - witherFactor));
+        line(this.renderPos.x, this.renderPos.y, this.parent.renderPos.x, this.parent.renderPos.y);
       }
 
-      drawLetter() {
-        if (this.size < 0.1 || !this.char) return;
+      drawLetter(witherFactor) {
+        if (this.currentSize < 0.1 || !this.char || witherFactor >= 1) return;
         
         push();
-        translate(this.pos.x, this.pos.y);
+        translate(this.renderPos.x, this.renderPos.y);
         rotate(this.angle + PI/2);
         
         let col = color(controls.get('text_color') || '#ffffff');
+        if (controls.get('color_mode') === 'Natural' && bgImg && bgImg.width > 1) {
+          let imgX = floor(constrain(map(this.basePos.x, 0, width, 0, bgImg.width), 0, bgImg.width - 1));
+          let imgY = floor(constrain(map(this.basePos.y, 0, height, 0, bgImg.height), 0, bgImg.height - 1));
+          let sampled = bgImg.get(imgX, imgY);
+          if (sampled && alpha(sampled) > 0) col = sampled;
+        }
+
         noStroke();
-        fill(col);
-        textSize(this.size);
+        fill(red(col), green(col), blue(col), 255 * (1 - witherFactor));
+        textSize(this.currentSize);
         text(this.char, 0, 0);
 
-        if (this.isTerminal && this.bloomScale > 0.01) {
-          this.drawFlower(col);
+        if (this.isTerminal && this.currentBloom > 0.01) {
+          this.drawFlower(col, witherFactor);
         }
         pop();
       }
 
-      drawFlower(col) {
+      drawFlower(col, witherFactor) {
         let petals = 6;
-        let fSize = controls.get('flower_size') || 0.7;
-        let radius = (controls.get('font_size') || 24) * fSize * this.bloomScale;
+        let fSize = controls.get('flower_size') || 0.8;
+        let radius = (controls.get('font_size') || 32) * fSize * this.currentBloom;
         let content = controls.get('text') || '(liebestod*¨][*¨+´+´+)';
         
         push();
         for (let i = 0; i < petals; i++) {
           rotate(TWO_PI / petals);
-          fill(red(col), green(col), blue(col), 200 * this.bloomScale);
-          textSize(this.size * fSize * this.bloomScale);
+          fill(red(col), green(col), blue(col), 200 * this.currentBloom);
+          textSize(this.currentSize * fSize * this.currentBloom);
           text(content[i % content.length], radius, 0);
-          fill(255, 200 * this.bloomScale);
+          fill(255, 200 * this.currentBloom);
           rectMode(CENTER);
-          rect(0, 0, 1.5 * this.bloomScale, 1.5 * this.bloomScale);
+          rect(0, 0, 1.5 * this.currentBloom, 1.5 * this.currentBloom);
           rectMode(CORNER);
         }
         pop();
