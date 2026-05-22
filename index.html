@@ -2,19 +2,30 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Floral Script Bloom</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <title>Liebestod Blooming Flower</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { 
+      box-sizing: border-box; 
+      margin: 0; 
+      padding: 0; 
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+    
     html, body {
       width: 100%;
       height: 100%;
-      background: transparent;
+      background: #000;
       overflow: hidden;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      position: fixed;
+      top: 0;
+      left: 0;
     }
+    
     .tool-canvas-area {
       width: 100%;
       height: 100%;
@@ -24,17 +35,33 @@
       position: relative;
       overflow: hidden;
     }
-    canvas { display: block; background: transparent; }
+    
+    canvas { 
+      display: block; 
+      background: transparent;
+      width: 100% !important;
+      height: 100% !important;
+      max-width: 100vw;
+      max-height: 100vh;
+    }
+    
+    /* Mobile optimizations */
+    @media (max-width: 768px) {
+      body {
+        font-size: 12px;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="tool-canvas-area"></div>
+
   <script>
     (function() {
-      var _isMobile = window.innerWidth <= 768;
+      var _isMobile = window.innerWidth <= 1024;
       if (_isMobile) {
         var _nativeDPR = window.devicePixelRatio || 1;
-        var _cappedDPR = Math.min(1.5, _nativeDPR);
+        var _cappedDPR = Math.min(1.2, _nativeDPR);
         Object.defineProperty(window, 'devicePixelRatio', { get: function() { return _cappedDPR; } });
       }
     })();
@@ -43,7 +70,7 @@
       var _exportMode = 'auto';
       var _exportWidth = 0;
       var _exportHeight = 0;
-      var _bgState = { mode: 'none', color: '#ffffff', imageEl: null, imageDataURL: null, fit: 'cover' };
+      var _bgState = { mode: 'none', color: '#000000', imageEl: null, imageDataURL: null, fit: 'cover' };
       var _cameraBridgeEnabled = false;
       var _cameraRequestSeq = 0;
       var _cameraSessions = {};
@@ -280,7 +307,7 @@
       function setBackground(state) {
         state = state || {};
         _bgState.mode = state.mode || 'none';
-        _bgState.color = state.color || '#ffffff';
+        _bgState.color = state.color || '#000000';
         _bgState.fit = state.fit || 'cover';
         if (state.image && state.image !== _bgState.imageDataURL) {
           _bgState.imageDataURL = state.image;
@@ -445,7 +472,7 @@
   </script>
   <script>
     var controls = (function() {
-      var _v = {"text":"(liebestod*¨][*¨+´+´+)","camera_interaction":false,"wind_strength":350,"hand_sensitivity":1,"volume":50,"text_color":"#ffffff","font_size":32,"blur":5,"color_mode":"Fixed","image":"https://base44.app/api/apps/69cbcd44d3da2a5cef013f5e/files/mp/public/69cbcd44d3da2a5cef013f5e/10f92b162_image_mpg6lqf6.jpg","play":true,"speed":2,"density":300,"noise_strength":30,"flower_size":0.8};
+      var _v = {"about_text":"\"Liebestod Blooming Flower\" is an interactive experience where you can modify and interact with the growth of a digital flower. The flower has a three-minute life cycle, after which it is reborn. Hand tracking enables real-time interaction: the closer your hands get, the more the flower deforms and the sound changes. Please make sure your camera is enabled.","text":"(liebestod*¨][*¨+´+´+)","text_color":"#ffffff","font_size":24,"play":true,"speed":2,"wind_strength":300,"density":250,"noise_strength":30,"flower_size":0.7,"volume":8,"camera_interaction":false,"hand_sensitivity":1,"blur":3,"image":"https://base44.app/api/apps/69cbcd44d3da2a5cef013f5e/files/mp/public/69cbcd44d3da2a5cef013f5e/10f92b162_image_mpg6lqf6.jpg"};
       var _defaults = JSON.parse(JSON.stringify(_v));
       function _hexToRgb(hex) {
         var h = String(hex || '').replace('#', '');
@@ -507,8 +534,8 @@
     let cameraStream = null;
     let prevFrame = null;
     let motionGrid = [];
-    const gridCols = 60;
-    const gridRows = 45;
+    const gridCols = 40;
+    const gridRows = 30;
 
     const AudioEngine = {
       ctx: null,
@@ -533,56 +560,28 @@
         }
       },
 
-      playDrop() {
-        if (!this.initialized) return;
-        const vol = (controls.get('volume') || 50) / 100;
-        if (vol <= 0) return;
-
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(random(800, 1200), this.ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.1);
-        gain.gain.setValueAtTime(vol * 0.05, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
-        osc.connect(gain);
-        gain.connect(this.master);
-        osc.start();
-        osc.stop(this.ctx.currentTime + 0.1);
-      },
-
       playBell() {
         if (!this.initialized) return;
-        const vol = (controls.get('volume') || 50) / 100;
-        if (vol <= 0) return;
-
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(random(1500, 2500), this.ctx.currentTime);
-        gain.gain.setValueAtTime(vol * 0.03, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 1.5);
-        osc.connect(gain);
-        gain.connect(this.master);
-        osc.start();
-        osc.stop(this.ctx.currentTime + 1.5);
-      },
-
-      playShimmer() {
-        if (!this.initialized || random() > 0.1) return;
-        const vol = (controls.get('volume') || 50) / 100;
+        this.resume();
+        
+        const vol = (controls.get('volume') || 8) / 100;
         if (vol <= 0) return;
 
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(random(3000, 5000), this.ctx.currentTime);
-        gain.gain.setValueAtTime(vol * 0.01, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.05);
+        
+        const freqs = [1567.98, 1760.00, 1975.53, 2349.32, 2637.02];
+        osc.frequency.setValueAtTime(freqs[Math.floor(Math.random() * freqs.length)], this.ctx.currentTime);
+        
+        gain.gain.setValueAtTime(0, this.ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(vol * 0.1, this.ctx.currentTime + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 2.0);
+        
         osc.connect(gain);
         gain.connect(this.master);
         osc.start();
-        osc.stop(this.ctx.currentTime + 0.05);
+        osc.stop(this.ctx.currentTime + 2.0);
       }
     };
 
@@ -653,11 +652,11 @@
       const cellH = imgData.height / gridRows;
 
       for (let i = 0; i < motionGrid.length; i++) {
-        motionGrid[i] *= 0.82;
+        motionGrid[i] *= 0.85;
       }
 
-      for (let y = 0; y < imgData.height; y += 4) {
-        for (let x = 0; x < imgData.width; x += 4) {
+      for (let y = 0; y < imgData.height; y += 6) {
+        for (let x = 0; x < imgData.width; x += 6) {
           let i = (y * imgData.width + x) * 4;
           let diff = Math.abs(imgData.data[i] - prevFrame[i]) + 
                      Math.abs(imgData.data[i+1] - prevFrame[i+1]) + 
@@ -669,7 +668,7 @@
             let mirroredGX = (gridCols - 1) - gx;
             let gridIdx = gy * gridCols + mirroredGX;
             if (gridIdx >= 0 && gridIdx < motionGrid.length) {
-              motionGrid[gridIdx] += diff * 0.01;
+              motionGrid[gridIdx] += diff * 0.015;
             }
           }
           
@@ -730,7 +729,7 @@
         
         if (growthTimer > 1) {
           plants.forEach(p => {
-            if (p.nodes.length < (controls.get('density') || 300)) {
+            if (p.nodes.length < (controls.get('density') || 250)) {
               p.grow();
             }
           });
@@ -741,6 +740,21 @@
       plants.forEach(p => p.update());
       plants.forEach(p => p.display());
 
+      let mousePos = createVector(mouseX, mouseY);
+      plants.forEach(p => {
+        p.nodes.forEach(n => {
+          if (n.isTerminal && n.bloomScale > 0.5) {
+            let d = p5.Vector.dist(n.pos, mousePos);
+            if (d < 40 && !n.cursorOver) {
+              AudioEngine.playBell();
+              n.cursorOver = true;
+            } else if (d >= 40) {
+              n.cursorOver = false;
+            }
+          }
+        });
+      });
+
       if (controls.get('camera_interaction')) {
         const cellW = width / gridCols;
         const cellH = height / gridRows;
@@ -749,11 +763,17 @@
           for (let gx = 0; gx < gridCols; gx++) {
             let val = motionGrid[gy * gridCols + gx];
             if (val > 0.5) {
-              fill(255, map(val, 0.5, 10, 0, 40));
+              fill(255, map(val, 0.5, 10, 0, 60));
               rect(gx * cellW + cellW/2, gy * cellH + cellH/2, 1.5, 1.5);
             }
           }
         }
+      }
+
+      if (!AudioEngine.initialized) {
+        fill(255, 150);
+        textSize(12);
+        text("Tap to Start Audio", width/2, height - 30);
       }
     }
 
@@ -763,6 +783,16 @@
       if (mouseY > height * 0.8) {
         plants.push(new Plant(mouseX, height));
       }
+      return false;
+    }
+
+    function touchStarted() {
+      AudioEngine.init();
+      AudioEngine.resume();
+      if (touches.length > 0 && touches[0].y > height * 0.8) {
+        plants.push(new Plant(touches[0].x, height));
+      }
+      return false;
     }
 
     class Plant {
@@ -806,8 +836,6 @@
         
         parent.isTerminal = false;
         this.nodes.push(newNode);
-        
-        AudioEngine.playDrop();
       }
 
       update() {
@@ -832,8 +860,9 @@
         this.isTerminal = true;
         this.bloomScale = 0;
         this.hasBloomed = false;
+        this.cursorOver = false;
         
-        let baseSize = controls.get('font_size') || 32;
+        let baseSize = controls.get('font_size') || 24;
         this.targetSize = map(depth, 1, 60, baseSize, baseSize * 0.3);
         this.offset = createVector(0, 0);
         
@@ -841,7 +870,7 @@
           gsap.to(this, {
             size: this.targetSize,
             duration: 1.5,
-            ease: "elastic.out(1, 0.5)"
+            ease: 'elastic.out(1, 0.5)'
           });
         } else {
           this.size = this.targetSize;
@@ -849,17 +878,8 @@
       }
 
       update() {
-        let windStr = (controls.get('wind_strength') || 120) / 100;
+        let windStr = (controls.get('wind_strength') || 300) / 100;
         let windEffect = createVector(0, 0);
-
-        let mousePos = createVector(mouseX, mouseY);
-        let distToMouse = p5.Vector.dist(this.pos, mousePos);
-        if (distToMouse < 400) {
-          let mEffect = p5.Vector.sub(this.pos, mousePos);
-          mEffect.normalize();
-          let force = map(distToMouse, 0, 400, windStr * 250, 0);
-          windEffect.add(mEffect.mult(force));
-        }
 
         if (controls.get('camera_interaction')) {
           let gx = Math.floor(constrain(map(this.pos.x, 0, width, 0, gridCols - 1), 0, gridCols - 1));
@@ -870,14 +890,17 @@
           if (motion > 0.1) {
             let push = createVector(this.pos.x - width/2, this.pos.y - height/2);
             push.normalize();
-            windEffect.add(push.mult(motion * windStr * 50 * sensitivity));
-            AudioEngine.playShimmer();
+            windEffect.add(push.mult(motion * windStr * 40 * sensitivity));
+            
+            if (this.isTerminal && this.bloomScale > 0.5 && random() < 0.03) {
+              AudioEngine.playBell();
+            }
           }
         }
         
-        let time = frameCount * 0.06; 
+        let time = frameCount * 0.06;
         let noiseScale = 0.008;
-        let depthFactor = pow(this.depth / 10, 1.5); 
+        let depthFactor = pow(this.depth / 10, 1.5);
         let turbulence = windStr * 60 * depthFactor;
         
         let swayX = (noise(this.basePos.x * noiseScale, this.basePos.y * noiseScale, time) - 0.5) * turbulence;
@@ -888,14 +911,13 @@
         swayY += whip * 0.5;
         
         let targetOffset = createVector(swayX + windEffect.x, swayY + windEffect.y);
-        this.offset.lerp(targetOffset, 0.12); 
+        this.offset.lerp(targetOffset, 0.12);
         this.pos = p5.Vector.add(this.basePos, this.offset);
 
         if (this.isTerminal && this.depth > 15) {
           if (!this.hasBloomed && this.bloomScale > 0.5) {
             AudioEngine.playBell();
             this.hasBloomed = true;
-            this.lastRung = millis();
           }
           this.bloomScale = lerp(this.bloomScale, 1, 0.05);
         }
@@ -904,12 +926,6 @@
       drawBranch() {
         if (!this.parent || this.depth === 0) return;
         stroke(255, 60);
-        if (controls.get('color_mode') === 'Natural' && bgImg && bgImg.width > 1) {
-          let imgX = floor(constrain(map(this.basePos.x, 0, width, 0, bgImg.width), 0, bgImg.width - 1));
-          let imgY = floor(constrain(map(this.basePos.y, 0, height, 0, bgImg.height), 0, bgImg.height - 1));
-          let c = bgImg.get(imgX, imgY);
-          if (c && alpha(c) > 0) stroke(red(c), green(c), blue(c), 100);
-        }
         strokeWeight(map(this.depth, 1, 60, 5, 0.5));
         line(this.pos.x, this.pos.y, this.parent.pos.x, this.parent.pos.y);
       }
@@ -922,13 +938,6 @@
         rotate(this.angle + PI/2);
         
         let col = color(controls.get('text_color') || '#ffffff');
-        if (controls.get('color_mode') === 'Natural' && bgImg && bgImg.width > 1) {
-          let imgX = floor(constrain(map(this.basePos.x, 0, width, 0, bgImg.width), 0, bgImg.width - 1));
-          let imgY = floor(constrain(map(this.basePos.y, 0, height, 0, bgImg.height), 0, bgImg.height - 1));
-          let sampled = bgImg.get(imgX, imgY);
-          if (sampled && alpha(sampled) > 0) col = sampled;
-        }
-
         noStroke();
         fill(col);
         textSize(this.size);
@@ -942,8 +951,8 @@
 
       drawFlower(col) {
         let petals = 6;
-        let fSize = controls.get('flower_size') || 0.8;
-        let radius = (controls.get('font_size') || 32) * fSize * this.bloomScale;
+        let fSize = controls.get('flower_size') || 0.7;
+        let radius = (controls.get('font_size') || 24) * fSize * this.bloomScale;
         let content = controls.get('text') || '(liebestod*¨][*¨+´+´+)';
         
         push();
